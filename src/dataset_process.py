@@ -78,13 +78,13 @@ def process_images(img_paths, conf_thres=0.25):
                     # key = cv2.waitKey(0)
                     # if key in (27, ord("q"), ord("Q")):
                     #     break
-    print(f"准确率={correct / total}")
+    print(f"准确率={correct / total} {correct} {total}")
         
 
 def test_dataset(
         image_root
 ):
-    images = collect_image_files(image_root,100)
+    images = collect_image_files(image_root,1000)
     if not images:
         print(f"目录内未找到图片: {resolve_local_path(image_root)}")
         return

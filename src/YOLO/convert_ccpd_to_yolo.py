@@ -198,7 +198,8 @@ def convert_dataset(
     val_ratio: float = 0.2,
     test_ratio: float = 0.1,
     copy_images: bool = True,
-    preserve_splits: bool = False
+    preserve_splits: bool = False,
+    max_size: Optional[int] = None
 ) -> bool:
     """
     转换 CCPD 数据集为 YOLO 格式
@@ -211,7 +212,9 @@ def convert_dataset(
         test_ratio: 测试集比例（仅在 preserve_splits=False 时使用）
         copy_images: 是否复制图片（False 则移动图片）
         preserve_splits: 是否保留原始的 train/val/test 划分
+        max_size: 最多处理的图片数量（仅在 preserve_splits=False 时使用）
     """
+    print(f"[debug] max_size={max_size}\n")
     print("\n" + "=" * 70)
     print("CCPD 数据集转换为 YOLO 格式")
     print("=" * 70)
@@ -273,6 +276,12 @@ def convert_dataset(
         if len(image_files) == 0:
             print(f"✗ 在 {source_path} 中未找到图片文件")
             return False
+
+        if max_size is not None and max_size > 0 and len(image_files) > max_size:
+            random.seed(42)
+            random.shuffle(image_files)
+            image_files = image_files[:max_size]
+            print(f"✓ 已启用 max_size={max_size}，将样本数限制为 {len(image_files)}")
 
         print(f"✓ 找到 {len(image_files)} 个图片文件")
 
@@ -508,12 +517,22 @@ def main():
         action='store_true',
         help='转换所有 CCPD 数据集（CCPD2019, CCPD2020）'
     )
+    parser.add_argument(
+        '--max-size',
+        type=int,
+        default=10000,
+        help='最多处理的图片数量（默认: 不限制，仅在 preserve-splits=False 时有效）'
+    )
 
     args = parser.parse_args()
 
     # 验证比例
     if args.val_ratio + args.test_ratio >= 1.0:
         print("✗ 验证集和测试集比例之和必须小于 1.0")
+        return
+
+    if args.max_size is not None and args.max_size <= 0:
+        print("✗ max-size 必须大于 0")
         return
 
     # 确定要转换的数据集
@@ -563,7 +582,8 @@ def main():
             val_ratio=args.val_ratio,
             test_ratio=args.test_ratio,
             copy_images=args.copy,
-            preserve_splits=args.preserve_splits
+            preserve_splits=args.preserve_splits,
+            max_size=args.max_size
         )
 
         if success and not args.no_yaml:

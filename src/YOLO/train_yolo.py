@@ -1,10 +1,10 @@
 from ultralytics import YOLO
 
-model = YOLO("weights/best_local.pt")
+model = YOLO("./weights/best_local.pt")
 
 results = model.train(
     data="../YOLO_Data/data.yaml",
-    epochs=5,
+    epochs=50,
     imgsz=640,
     batch=-1,
     workers=8,
