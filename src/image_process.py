@@ -7,6 +7,7 @@ from PIL import Image, ImageDraw, ImageFont
 from ultralytics import YOLO
 
 from LPRNet.model.LPRNet import build_lprnet
+from LPRNet.model.STNet import build_STNet
 
 CHARS = [
     "京", "沪", "津", "渝", "冀", "晋", "蒙", "辽", "吉", "黑",
@@ -28,13 +29,20 @@ FONT_CANDIDATES = [
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 yolo_weight = os.path.join(BASE_DIR, "YOLO/weights/best.pt")
-lpr_weight = os.path.join(BASE_DIR, "LPRNet/weights/final.pth")
+lpr_weight = os.path.join(BASE_DIR, "LPRNet/weights/Final_LPRNet_model.pth")
+stn_weight = os.path.join(BASE_DIR, "LPRNet/weights/Final_STNet_model.pth")
 
 yolo_model = YOLO(yolo_weight)
+
 lpr_model = build_lprnet(lpr_max_len=8, phase=False, class_num=len(CHARS), dropout_rate=0)
 lpr_model.load_state_dict(torch.load(lpr_weight, map_location=device))
 lpr_model.to(device)
 lpr_model.eval()
+
+stn_model = build_STNet(False)
+stn_model.load_state_dict(torch.load(stn_weight,map_location=device))
+stn_model.to(device)
+stn_model.eval()
 
 
 def resolve_local_path(path):
@@ -98,6 +106,7 @@ def recognize_plate(crop_img):
     tmp_img = torch.from_numpy(tmp_img).unsqueeze(0).to(device)
 
     with torch.no_grad():
+        tmp_img = stn_model(tmp_img)
         preds = lpr_model(tmp_img)
         preds = preds.cpu().numpy()
         arg_max_preds = np.argmax(preds, axis=1)

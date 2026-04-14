@@ -7,6 +7,7 @@ Author: aiboy.wei@outlook.com .
 '''
 
 from data.load_data import CHARS, CHARS_DICT, CCPDDataloader, LPRDataLoader
+from model.STNet import build_STNet
 from model.LPRNet import build_lprnet
 # import torch.backends.cudnn as cudnn
 from torch.autograd import Variable
@@ -19,6 +20,70 @@ import argparse
 import torch
 import time
 import os
+
+def parse_img_dirs(img_dirs):
+    if isinstance(img_dirs, str):
+        return [item.strip() for item in img_dirs.split(',') if item.strip()]
+    return [str(item).strip() for item in img_dirs if str(item).strip()]
+
+def resolve_img_dirs(img_dirs):
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    src_root = os.path.abspath(os.path.join(script_dir, ".."))
+    resolved_dirs = []
+
+    for raw_path in parse_img_dirs(img_dirs):
+        expanded_path = os.path.expanduser(raw_path)
+        candidate_paths = [expanded_path]
+        if not os.path.isabs(expanded_path):
+            candidate_paths.append(os.path.join(src_root, expanded_path))
+
+        matched_path = None
+        for candidate in candidate_paths:
+            abs_candidate = os.path.abspath(candidate)
+            if os.path.isdir(abs_candidate):
+                matched_path = abs_candidate
+                break
+
+        if matched_path is None:
+            raise ValueError(
+                f"找不到数据目录: {raw_path}. "
+                f"可用逗号分隔多个目录，例如 "
+                f"'dataset/CCPD2019,dataset/CCPD2020/ccpd_green/train'"
+            )
+        resolved_dirs.append(matched_path)
+
+    if not resolved_dirs:
+        raise ValueError("未提供有效的数据目录。")
+
+    return resolved_dirs
+
+def init_lprnet_weights(lprnet):
+    for module in lprnet.modules():
+        if isinstance(module, nn.Conv2d):
+            nn.init.kaiming_normal_(module.weight, mode='fan_out')
+            if module.bias is not None:
+                nn.init.constant_(module.bias, 0.01)
+        elif isinstance(module, nn.BatchNorm2d):
+            nn.init.ones_(module.weight)
+            nn.init.zeros_(module.bias)
+        elif isinstance(module, nn.Linear):
+            nn.init.xavier_uniform_(module.weight)
+            nn.init.zeros_(module.bias)
+
+def init_stnet_weights(stnet):
+    identity_head = stnet.fc_loc[2]
+    for module in stnet.modules():
+        if isinstance(module, nn.Conv2d):
+            nn.init.kaiming_normal_(module.weight, mode='fan_out')
+            if module.bias is not None:
+                nn.init.constant_(module.bias, 0.01)
+        elif isinstance(module, nn.Linear) and module is not identity_head:
+            nn.init.xavier_uniform_(module.weight)
+            nn.init.zeros_(module.bias)
+
+    # Keep the affine regressor initialized to identity so STN starts stable.
+    identity_head.weight.data.zero_()
+    identity_head.bias.data.copy_(torch.tensor([1, 0, 0, 0, 1, 0], dtype=torch.float))
 
 def sparse_tuple_for_ctc(T_length, lengths):
     input_lengths = []
@@ -48,13 +113,13 @@ def adjust_learning_rate(optimizer, cur_epoch, base_lr, lr_schedule):
 
 def get_parser():
     parser = argparse.ArgumentParser(description='parameters to train net')
-    parser.add_argument('--max_epoch', default=5, help='epoch to train the network')
+    parser.add_argument('--max_epoch',type=int, default=5, help='epoch to train the network')
     parser.add_argument('--img_size', default=[94, 24], help='the image size')
-    parser.add_argument('--train_img_dirs', default="~/workspace/trainMixLPR", help='the train images path')
-    parser.add_argument('--test_img_dirs', default="~/workspace/testMixLPR", help='the test images path')
-    parser.add_argument('--dataset_type', default='generic', choices=['generic', 'ccpd'], help='dataset format for dataloader')
+    parser.add_argument('--train_img_dirs', default="dataset/CCPD2019,dataset/CCPD2020", help='comma-separated train image directories')
+    parser.add_argument('--test_img_dirs', default="dataset/CCPD_test", help='comma-separated test image directories')
+    parser.add_argument('--dataset_type', default='ccpd', choices=['generic', 'ccpd'], help='dataset format for dataloader')
     parser.add_argument('--dropout_rate', default=0.5, help='dropout rate.')
-    parser.add_argument('--learning_rate', default=0.0001, help='base value of learning rate.')
+    parser.add_argument('--learning_rate',type=float, default=0.0001, help='base value of learning rate.')
     parser.add_argument('--lpr_max_len', default=8, help='license plate number max length.')
     parser.add_argument('--train_batch_size', default=128, help='training batch size.')
     parser.add_argument('--test_batch_size', default=120, help='testing batch size.')
@@ -67,8 +132,9 @@ def get_parser():
     parser.add_argument('--momentum', default=0.9, type=float, help='momentum')
     parser.add_argument('--weight_decay', default=2e-5, type=float, help='Weight decay for SGD')
     parser.add_argument('--lr_schedule', default=[4, 8, 12, 14, 16], help='schedule for learning rate.')
-    parser.add_argument('--save_folder', default='./weights/', help='Location to save checkpoint models')
-    parser.add_argument('--pretrained_model', default='LPRNet/weights/Final_LPRNet_model.pth', help='pretrained base model')
+    parser.add_argument('--save_folder', default='LPRNet/weights/', help='Location to save checkpoint models')
+    parser.add_argument('--pretrained_model_LPR', default='/home/fiatiustitia/RK3568_LPR/src/LPRNet/weights/Final_LPRNet_model.pth', help='pretrained LPRNet base model')
+    parser.add_argument('--pretrained_model_STN', default='/home/fiatiustitia/RK3568_LPR/src/LPRNet/weights/Final_STNet_model.pth', help='pretrained STNet base model')
     # parser.add_argument('--pretrained_model', default='', help='pretrained base model')
 
     args = parser.parse_args()
@@ -99,44 +165,41 @@ def train():
         os.mkdir(args.save_folder)
 
     lprnet = build_lprnet(lpr_max_len=args.lpr_max_len, phase=args.phase_train, class_num=len(CHARS), dropout_rate=args.dropout_rate)
+    stnet = build_STNet(phase=args.phase_train)
     device = torch.device("cuda:0" if args.cuda else "cpu")
     lprnet.to(device)
+    stnet.to(device)
     print("Successful to build network!")
 
     # load pretrained model
-    if args.pretrained_model:
-        lprnet.load_state_dict(torch.load(args.pretrained_model))
-        print("load pretrained model successful!")
+    if args.pretrained_model_LPR:
+        lprnet.load_state_dict(torch.load(args.pretrained_model_LPR, map_location=device))
+        print("load LPR pretrained model successful!")
     else:
-        def xavier(param):
-            nn.init.xavier_uniform(param)
-
-        def weights_init(m):
-            for key in m.state_dict():
-                if key.split('.')[-1] == 'weight':
-                    if 'conv' in key:
-                        nn.init.kaiming_normal_(m.state_dict()[key], mode='fan_out')
-                    if 'bn' in key:
-                        m.state_dict()[key][...] = xavier(1)
-                elif key.split('.')[-1] == 'bias':
-                    m.state_dict()[key][...] = 0.01
-
-        lprnet.backbone.apply(weights_init)
-        lprnet.container.apply(weights_init)
+        init_lprnet_weights(lprnet)
+        print("initial net weights successful!")
+    
+    if args.pretrained_model_STN:
+        stnet.load_state_dict(torch.load(args.pretrained_model_STN, map_location=device))
+        print("load STN pretrained model successful!")
+    else:
+        init_stnet_weights(stnet)
         print("initial net weights successful!")
 
     # define optimizer
     # optimizer = optim.SGD(lprnet.parameters(), lr=args.learning_rate,
     #                       momentum=args.momentum, weight_decay=args.weight_decay)
-    optimizer = optim.RMSprop(lprnet.parameters(), lr=args.learning_rate, alpha = 0.9, eps=1e-08,
+    optimizer = optim.RMSprop(list(stnet.parameters()) + list(lprnet.parameters()), lr=args.learning_rate, alpha = 0.9, eps=1e-08,
                          momentum=args.momentum, weight_decay=args.weight_decay)
-    train_img_dirs = os.path.expanduser(args.train_img_dirs)
-    test_img_dirs = os.path.expanduser(args.test_img_dirs)
+    train_img_dirs = resolve_img_dirs(args.train_img_dirs)
+    test_img_dirs = resolve_img_dirs(args.test_img_dirs)
     loader_cls = CCPDDataloader if args.dataset_type == 'ccpd' else LPRDataLoader
-    train_dataset = loader_cls(train_img_dirs.split(','), args.img_size, args.lpr_max_len)
-    test_dataset = loader_cls(test_img_dirs.split(','), args.img_size, args.lpr_max_len)
+    train_dataset = loader_cls(train_img_dirs, args.img_size, args.lpr_max_len)
+    test_dataset = loader_cls(test_img_dirs, args.img_size, args.lpr_max_len)
 
     print(f'dataset_type={args.dataset_type}')
+    print(f'train_img_dirs={train_img_dirs}')
+    print(f'test_img_dirs={test_img_dirs}')
 
     epoch_size = len(train_dataset) // args.train_batch_size
     max_iter = args.max_epoch * epoch_size
@@ -157,10 +220,12 @@ def train():
 
         if iteration !=0 and iteration % args.save_interval == 0:
             torch.save(lprnet.state_dict(), args.save_folder + 'LPRNet_' + '_iteration_' + repr(iteration) + '.pth')
+            torch.save(stnet.state_dict(), args.save_folder + 'STNet_' + '_iteration_' + repr(iteration) + '.pth')
 
         if (iteration + 1) % args.test_interval == 0:
-            Greedy_Decode_Eval(lprnet, test_dataset, args)
-            # lprnet.train() # should be switch to train mode
+            Greedy_Decode_Eval(stnet, lprnet, test_dataset, args)
+            stnet.train()
+            lprnet.train()
 
         start_time = time.time()
         # load train data
@@ -180,6 +245,7 @@ def train():
             labels = Variable(labels, requires_grad=False)
 
         # forward
+        images = stnet(images)
         logits = lprnet(images)
         log_probs = logits.permute(2, 0, 1) # for ctc loss: T x N x C
         # print(labels.shape)
@@ -201,14 +267,15 @@ def train():
                   'Batch time: %.4f sec. ||' % (end_time - start_time) + 'LR: %.8f' % (lr))
     # final test
     print("Final test Accuracy:")
-    Greedy_Decode_Eval(lprnet, test_dataset, args)
+    Greedy_Decode_Eval(stnet, lprnet, test_dataset, args)
 
     # save final parameters
     torch.save(lprnet.state_dict(), args.save_folder + 'Final_LPRNet_model.pth')
+    torch.save(stnet.state_dict(), args.save_folder + 'Final_STNet_model.pth')
 
-def Greedy_Decode_Eval(Net, datasets, args):
-    # TestNet = Net.eval()
-    return
+def Greedy_Decode_Eval(stnet, lprnet, datasets, args):
+    stnet.eval()
+    lprnet.eval()
     epoch_size = len(datasets) // args.test_batch_size
     batch_iterator = iter(DataLoader(datasets, args.test_batch_size, shuffle=True, num_workers=args.num_workers, collate_fn=collate_fn))
 
@@ -223,9 +290,8 @@ def Greedy_Decode_Eval(Net, datasets, args):
         targets = []
         for length in lengths:
             label = labels[start:start+length]
-            targets.append(label)
+            targets.append(label.cpu().numpy())
             start += length
-        targets = np.array([el.numpy() for el in targets])
 
         if args.cuda:
             images = Variable(images.cuda())
@@ -233,7 +299,8 @@ def Greedy_Decode_Eval(Net, datasets, args):
             images = Variable(images)
 
         # forward
-        prebs = Net(images)
+        with torch.no_grad():
+            prebs = lprnet(stnet(images))
         # greedy decode
         prebs = prebs.cpu().detach().numpy()
         preb_labels = list()

@@ -6,9 +6,10 @@ test pretrained model.
 Author: aiboy.wei@outlook.com .
 '''
 
-from data.load_data import CHARS, CHARS_DICT, LPRDataLoader
+from data.load_data import CHARS, CHARS_DICT, LPRDataLoader,CCPDDataloader
 from PIL import Image, ImageDraw, ImageFont
 from model.LPRNet import build_lprnet
+from model.STNet import build_STNet
 # import torch.backends.cudnn as cudnn
 from torch.autograd import Variable
 import torch.nn.functional as F
@@ -26,15 +27,17 @@ import cv2
 def get_parser():
     parser = argparse.ArgumentParser(description='parameters to train net')
     parser.add_argument('--img_size', default=[94, 24], help='the image size')
-    parser.add_argument('--test_img_dirs', default="./data/test", help='the test images path')
+    parser.add_argument('--test_img_dirs', default="dataset/CCPD_test", help='the test images path')
+    parser.add_argument('--dataset_type', default='ccpd', choices=['generic', 'ccpd'], help='dataset format for dataloader')
     parser.add_argument('--dropout_rate', default=0, help='dropout rate.')
     parser.add_argument('--lpr_max_len', default=8, help='license plate number max length.')
-    parser.add_argument('--test_batch_size', default=100, help='testing batch size.')
+    parser.add_argument('--test_batch_size', default=10, help='testing batch size.')
     parser.add_argument('--phase_train', default=False, type=bool, help='train or test phase flag.')
     parser.add_argument('--num_workers', default=8, type=int, help='Number of workers used in dataloading')
     parser.add_argument('--cuda', default=True, type=bool, help='Use cuda to train model')
     parser.add_argument('--show', default=False, type=bool, help='show test image and its predict result or not.')
-    parser.add_argument('--pretrained_model', default='./weights/Final_LPRNet_model.pth', help='pretrained base model')
+    parser.add_argument('--pretrained_model_LPR', default='LPRNet/weights/Final_LPRNet_model.pth', help='pretrained LPRNet model')
+    parser.add_argument('--pretrained_model_STN', default='LPRNet/weights/Final_STNet_model.pth', help='pretrained STNet model')
 
     args = parser.parse_args()
 
@@ -56,28 +59,31 @@ def collate_fn(batch):
 def test():
     args = get_parser()
 
+    stnet = build_STNet(phase=args.phase_train)
     lprnet = build_lprnet(lpr_max_len=args.lpr_max_len, phase=args.phase_train, class_num=len(CHARS), dropout_rate=args.dropout_rate)
     device = torch.device("cuda:0" if args.cuda else "cpu")
+    stnet.to(device)
     lprnet.to(device)
     print("Successful to build network!")
 
     # load pretrained model
-    if args.pretrained_model:
-        lprnet.load_state_dict(torch.load(args.pretrained_model))
-        print("load pretrained model successful!")
-    else:
-        print("[Error] Can't found pretrained mode, please check!")
+    if not args.pretrained_model_STN or not args.pretrained_model_LPR:
+        print("[Error] Can't found pretrained model, please check!")
         return False
+    stnet.load_state_dict(torch.load(args.pretrained_model_STN, map_location=device))
+    lprnet.load_state_dict(torch.load(args.pretrained_model_LPR, map_location=device))
+    print("load pretrained model successful!")
 
     test_img_dirs = os.path.expanduser(args.test_img_dirs)
-    test_dataset = LPRDataLoader(test_img_dirs.split(','), args.img_size, args.lpr_max_len)
+    test_dataset =  CCPDDataloader(test_img_dirs.split(','), args.img_size, args.lpr_max_len) if args.dataset_type == 'ccpd' else LPRDataLoader(test_img_dirs.split(','), args.img_size, args.lpr_max_len)
     try:
-        Greedy_Decode_Eval(lprnet, test_dataset, args)
+        Greedy_Decode_Eval(stnet, lprnet, test_dataset, args)
     finally:
         cv2.destroyAllWindows()
 
-def Greedy_Decode_Eval(Net, datasets, args):
-    # TestNet = Net.eval()
+def Greedy_Decode_Eval(stnet, lprnet, datasets, args):
+    stnet.eval()
+    lprnet.eval()
     epoch_size = len(datasets) // args.test_batch_size
     batch_iterator = iter(DataLoader(datasets, args.test_batch_size, shuffle=True, num_workers=args.num_workers, collate_fn=collate_fn))
 
@@ -92,9 +98,8 @@ def Greedy_Decode_Eval(Net, datasets, args):
         targets = []
         for length in lengths:
             label = labels[start:start+length]
-            targets.append(label)
+            targets.append(label.cpu().numpy())
             start += length
-        targets = np.array([el.numpy() for el in targets])
         imgs = images.numpy().copy()
 
         if args.cuda:
@@ -103,7 +108,8 @@ def Greedy_Decode_Eval(Net, datasets, args):
             images = Variable(images)
 
         # forward
-        prebs = Net(images)
+        with torch.no_grad():
+            prebs = lprnet(stnet(images))
         # greedy decode
         prebs = prebs.cpu().detach().numpy()
         preb_labels = list()
