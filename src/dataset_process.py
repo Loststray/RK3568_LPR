@@ -71,8 +71,8 @@ def process_images(img_paths, conf_thres=0.25):
                 # print(f"  车牌 : {det['plate']} (置信度: {det['conf']:.2f}) 实际车牌 : {lp_str}")
                 if det['plate'] == lp_str:
                     correct += 1
-                else:
-                    print(f"\n图片: {resolved}\n 车牌 = {det['plate']} (置信度: {det['conf']:.2f}) 实际车牌 : {lp_str}")
+                # else:
+                    # print(f"\n图片: {resolved}\n 车牌 = {det['plate']} (置信度: {det['conf']:.2f}) 实际车牌 : {lp_str}")
                     # vis_img = draw_detections(img_ori, detections)
                     # cv2.imshow("Recognition Result", vis_img)
                     # key = cv2.waitKey(0)
@@ -82,13 +82,14 @@ def process_images(img_paths, conf_thres=0.25):
         
 
 def test_dataset(
-        image_root
+        image_root,
+        conf_thresh = 0.25
 ):
-    images = collect_image_files(image_root,1000)
+    images = collect_image_files(image_root)
     if not images:
         print(f"目录内未找到图片: {resolve_local_path(image_root)}")
         return
 
     print(f"共找到 {len(images)} 张图片，开始识别...")
     
-    process_images(images)
+    process_images(images,conf_thresh)

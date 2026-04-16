@@ -10,7 +10,7 @@ def get_parser():
     parser = argparse.ArgumentParser(description="车牌检测与识别（单图/视频流关键帧）")
     parser.add_argument("--mode", choices=["image", "video", "dataset"], default="image", help="运行模式")
     parser.add_argument("--source", default=None, help="image 模式传图片根目录，video 模式传视频路径或摄像头编号")
-    parser.add_argument("--conf-thres", type=float, default=0.25, help="YOLO 检测阈值")
+    parser.add_argument("--conf-thres", type=float, default=0.5, help="YOLO 检测阈值")
     parser.add_argument("--frame-interval", type=int, default=3, help="视频模式：每隔 N 帧触发一次关键帧判定")
     parser.add_argument("--motion-threshold", type=float, default=6.0, help="视频模式：帧间差分阈值")
     parser.add_argument("--max-skip", type=int, default=30, help="视频模式：最长跳过帧数，超过后强制做一次识别")
@@ -48,6 +48,6 @@ if __name__ == "__main__":
             run_image_mode(image_root=image_root, conf_thres=args.conf_thres)
         else:
             image_root = args.source if args.source else DEFAULT_IMAGE_ROOT
-            test_dataset(image_root=image_root)
+            test_dataset(image_root=image_root,conf_thresh=args.conf_thres)
     finally:
         cv2.destroyAllWindows()
