@@ -1,6 +1,20 @@
 import torch.nn as nn
 import torch
 
+
+class channel_sampled_maxpool2d(nn.Module):
+    def __init__(self, spatial_stride_w=1, channel_stride=1):
+        super(channel_sampled_maxpool2d, self).__init__()
+        self.spatial_stride_w = spatial_stride_w
+        self.channel_stride = channel_stride
+
+    def forward(self, x):
+        x = nn.functional.max_pool2d(x, kernel_size=3, stride=(1, self.spatial_stride_w))
+        if self.channel_stride > 1:
+            x = x[:, :: self.channel_stride, :, :]
+        return x
+
+
 class small_basic_block(nn.Module):
     def __init__(self, ch_in, ch_out):
         super(small_basic_block, self).__init__()
@@ -26,18 +40,19 @@ class LPRNet(nn.Module):
             nn.Conv2d(in_channels=3, out_channels=64, kernel_size=3, stride=1), # 0
             nn.BatchNorm2d(num_features=64),
             nn.ReLU(),  # 2
-            nn.MaxPool3d(kernel_size=(1, 3, 3), stride=(1, 1, 1)),
+            # MaxPool3d on 4D tensor can break some exporters; this is behavior-equivalent.
+            channel_sampled_maxpool2d(spatial_stride_w=1, channel_stride=1),
             small_basic_block(ch_in=64, ch_out=128),    # *** 4 ***
             nn.BatchNorm2d(num_features=128),
             nn.ReLU(),  # 6
-            nn.MaxPool3d(kernel_size=(1, 3, 3), stride=(2, 1, 2)),
+            channel_sampled_maxpool2d(spatial_stride_w=2, channel_stride=2),
             small_basic_block(ch_in=64, ch_out=256),   # 8
             nn.BatchNorm2d(num_features=256),
             nn.ReLU(),  # 10
             small_basic_block(ch_in=256, ch_out=256),   # *** 11 ***
             nn.BatchNorm2d(num_features=256),   # 12
             nn.ReLU(),
-            nn.MaxPool3d(kernel_size=(1, 3, 3), stride=(4, 1, 2)),  # 14
+            channel_sampled_maxpool2d(spatial_stride_w=2, channel_stride=4),  # 14
             nn.Dropout(dropout_rate),
             nn.Conv2d(in_channels=64, out_channels=256, kernel_size=(1, 4), stride=1),  # 16
             nn.BatchNorm2d(num_features=256),

@@ -36,6 +36,8 @@ def get_parser():
     parser.add_argument('--num_workers', default=8, type=int, help='Number of workers used in dataloading')
     parser.add_argument('--cuda', default=True, type=bool, help='Use cuda to train model')
     parser.add_argument('--show', default=False, type=bool, help='show test image and its predict result or not.')
+    parser.add_argument('--decode_method', default="greedy", help='choose method to perform ctc decode')
+    parser.add_argument('--topk', default=3, type=int, help='choose top-k results to output in beam decode mode')
     parser.add_argument('--pretrained_model_LPR', default='LPRNet/weights/Final_LPRNet_model.pth', help='pretrained LPRNet model')
     parser.add_argument('--pretrained_model_STN', default='LPRNet/weights/Final_STNet_model.pth', help='pretrained STNet model')
 
@@ -77,7 +79,11 @@ def test():
     test_img_dirs = os.path.expanduser(args.test_img_dirs)
     test_dataset =  CCPDDataloader(test_img_dirs.split(','), args.img_size, args.lpr_max_len) if args.dataset_type == 'ccpd' else LPRDataLoader(test_img_dirs.split(','), args.img_size, args.lpr_max_len)
     try:
-        Greedy_Decode_Eval(stnet, lprnet, test_dataset, args)
+        decode_method = str(args.decode_method).lower()
+        if decode_method.startswith("beam"):
+            Beam_Decode_Eval(stnet, lprnet, test_dataset, args)
+        else:
+            Greedy_Decode_Eval(stnet, lprnet, test_dataset, args)
     finally:
         cv2.destroyAllWindows()
 
@@ -143,6 +149,140 @@ def Greedy_Decode_Eval(stnet, lprnet, datasets, args):
                 Tn_2 += 1
     Acc = Tp * 1.0 / (Tp + Tn_1 + Tn_2)
     print("[Info] Test Accuracy: {} [{}:{}:{}:{}]".format(Acc, Tp, Tn_1, Tn_2, (Tp+Tn_1+Tn_2)))
+    t2 = time.time()
+    print("[Info] Test Speed: {}s 1/{}]".format((t2 - t1) / len(datasets), len(datasets)))
+
+def _log_sum_exp(*log_probs):
+    valid = [p for p in log_probs if p != -np.inf]
+    if not valid:
+        return -np.inf
+    max_log = max(valid)
+    return max_log + np.log(sum(np.exp(p - max_log) for p in valid))
+
+def _ctc_prefix_beam_search(log_probs, beam_size, blank_id):
+    beam_size = max(1, int(beam_size))
+    beam = {(): (0.0, -np.inf)}  # prefix -> (prob_end_blank, prob_end_non_blank)
+
+    for t in range(log_probs.shape[0]):
+        next_beam = {}
+        for prefix, (p_blank, p_non_blank) in beam.items():
+            for c in range(log_probs.shape[1]):
+                p = log_probs[t, c]
+                if c == blank_id:
+                    n_blank, n_non_blank = next_beam.get(prefix, (-np.inf, -np.inf))
+                    n_blank = _log_sum_exp(n_blank, p_blank + p, p_non_blank + p)
+                    next_beam[prefix] = (n_blank, n_non_blank)
+                    continue
+
+                end_char = prefix[-1] if prefix else None
+                extended = prefix + (int(c),)
+                n_blank, n_non_blank = next_beam.get(extended, (-np.inf, -np.inf))
+                if c == end_char:
+                    # Repeated char only extends prefix from blank states.
+                    n_non_blank = _log_sum_exp(n_non_blank, p_blank + p)
+                else:
+                    n_non_blank = _log_sum_exp(n_non_blank, p_blank + p, p_non_blank + p)
+                next_beam[extended] = (n_blank, n_non_blank)
+
+                if c == end_char:
+                    # Repeated char from non-blank keeps the same collapsed prefix.
+                    n_blank, n_non_blank = next_beam.get(prefix, (-np.inf, -np.inf))
+                    n_non_blank = _log_sum_exp(n_non_blank, p_non_blank + p)
+                    next_beam[prefix] = (n_blank, n_non_blank)
+
+        sorted_beam = sorted(
+            next_beam.items(),
+            key=lambda x: _log_sum_exp(x[1][0], x[1][1]),
+            reverse=True
+        )
+        beam = dict(sorted_beam[:beam_size])
+
+    return sorted(
+        [(list(prefix), _log_sum_exp(p_blank, p_non_blank)) for prefix, (p_blank, p_non_blank) in beam.items()],
+        key=lambda x: x[1],
+        reverse=True
+    )[:beam_size]
+
+def _is_valid_plate_seq(seq):
+    if len(seq) < 7 or len(seq) > 8:
+        return False
+    return all(CHARS[int(c)] not in ("O", "-") for c in seq)
+
+def _select_valid_prediction(pred_topk):
+    for seq in pred_topk:
+        if _is_valid_plate_seq(seq):
+            return seq
+    return []
+
+def Beam_Decode_Eval(stnet,lprnet,datasets,args):
+    stnet.eval()
+    lprnet.eval()
+    beam_size = max(1, int(args.topk))
+    blank_id = len(CHARS) - 1
+    epoch_size = len(datasets) // args.test_batch_size
+    batch_iterator = iter(DataLoader(datasets, args.test_batch_size, shuffle=True, num_workers=args.num_workers, collate_fn=collate_fn))
+
+    Top1_Tp = 0
+    Tp = 0
+    Tn_1 = 0
+    Tn_2 = 0
+    t1 = time.time()
+    for i in range(epoch_size):
+        # load test data
+        images, labels, lengths = next(batch_iterator)
+        start = 0
+        targets = []
+        for length in lengths:
+            label = labels[start:start+length]
+            targets.append(label.cpu().numpy())
+            start += length
+        imgs = images.numpy().copy()
+
+        if args.cuda:
+            images = Variable(images.cuda())
+        else:
+            images = Variable(images)
+
+        with torch.no_grad():
+            prebs = lprnet(stnet(images))
+            log_probs = F.log_softmax(prebs, dim=1).permute(0, 2, 1).cpu().detach().numpy()
+
+        for sample_idx in range(log_probs.shape[0]):
+            beam_results = _ctc_prefix_beam_search(log_probs[sample_idx], beam_size, blank_id)
+            if len(beam_results) == 0:
+                beam_results = [([], -np.inf)]
+            pred_topk = [item[0] for item in beam_results]
+            top1_pred = pred_topk[0]
+            selected_pred = _select_valid_prediction(pred_topk)
+            target = [int(v) for v in targets[sample_idx].tolist()]
+            target_tuple = tuple(target)
+
+            if args.show:
+                show(imgs[sample_idx], selected_pred, targets[sample_idx])
+                topk_text = ["".join(CHARS[c] for c in seq) for seq in pred_topk]
+                selected_text = "".join(CHARS[c] for c in selected_pred)
+                target_text = "".join(CHARS[c] for c in target)
+                print("[Beam] target: {}, top{}: {}, selected: {}".format(target_text, beam_size, topk_text, selected_text))
+
+            if tuple(top1_pred) == target_tuple:
+                Top1_Tp += 1
+
+            if tuple(selected_pred) == target_tuple:
+                Tp += 1
+            else:
+                if len(selected_pred) != len(target):
+                    Tn_1 += 1
+                else:
+                    Tn_2 += 1
+
+    total = Tp + Tn_1 + Tn_2
+    if total == 0:
+        print("[Info] Beam(top-{}) Test Accuracy: 0.0 [0:0:0:0]".format(beam_size))
+    else:
+        topk_acc = Tp * 1.0 / total
+        top1_acc = Top1_Tp * 1.0 / total
+        print("[Info] Beam(top-{}) Test Accuracy: {} [{}:{}:{}:{}]".format(beam_size, topk_acc, Tp, Tn_1, Tn_2, total))
+        print("[Info] Beam(top-1) Accuracy: {}".format(top1_acc))
     t2 = time.time()
     print("[Info] Test Speed: {}s 1/{}]".format((t2 - t1) / len(datasets), len(datasets)))
 

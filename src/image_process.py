@@ -26,6 +26,23 @@ FONT_CANDIDATES = [
     "/usr/share/fonts/truetype/wqy/wqy-microhei.ttc",
 ]
 
+EXPOSURE_PREPROCESS_DEFAULTS = {
+    "judge": {
+        "low_clip_pixel": 10,      # 小于等于该亮度算暗部截断
+        "high_clip_pixel": 245,    # 大于等于该亮度算高光截断
+        "low_clip_thr": 0.08,      # 暗部截断比例阈值
+        "high_clip_thr": 0.015,     # 高光截断比例阈值
+        "low_p50_thr": 90,         # 中位亮度过低阈值
+        "high_p50_thr": 110,       # 中位亮度过高阈值
+    },
+    "transform": {
+        "过度曝光": {"alpha": 0.80, "beta": -50.0, "gamma": 2},
+        "曝光不足": {"alpha": 1.25, "beta": 20.0, "gamma": 0.65},
+        "曝光正常": {"alpha": 1.00, "beta": 0.0, "gamma": 1.00},
+    },
+    "max_iters": 2,               # 自动纠偏最大迭代次数
+}
+
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 yolo_weight = os.path.join(BASE_DIR, "YOLO/weights/best.pt")
@@ -193,3 +210,113 @@ def collect_image_files(image_root, max_size=5000):
 
     image_files.sort()
     return image_files
+
+def transform_img(img, alpha=1.0, beta=0.0, gamma=1.0):
+    if img is None:
+        raise ValueError("img 不能为空")
+
+    img_float = img.astype(np.float32)
+    linear_img = np.clip(img_float * float(alpha) + float(beta), 0.0, 255.0)
+
+    safe_gamma = max(float(gamma), 1e-8)
+    gamma_img = np.power(linear_img / 255.0, safe_gamma) * 255.0
+    return np.clip(gamma_img, 0.0, 255.0).astype(np.uint8)
+
+
+def judge_exposure(
+    img_bgr,
+    low_clip_pixel=10,
+    high_clip_pixel=245,
+    low_clip_thr=0.08,
+    high_clip_thr=0.02,
+    low_p50_thr=90,
+    high_p50_thr=160,
+):
+    gray = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
+
+    low_clip = np.mean(gray <= low_clip_pixel)
+    high_clip = np.mean(gray >= high_clip_pixel)
+    p1, p50, p99 = np.percentile(gray, [1, 50, 99])
+
+    print(f"high={high_clip},p50={p50}\n")
+    if high_clip > high_clip_thr and p50 > high_p50_thr:
+        return "过度曝光", {
+            "low_clip": float(low_clip), "high_clip": float(high_clip),
+            "p1": float(p1), "p50": float(p50), "p99": float(p99)
+        }
+    if low_clip > low_clip_thr and p50 < low_p50_thr:
+        return "曝光不足", {
+            "low_clip": float(low_clip), "high_clip": float(high_clip),
+            "p1": float(p1), "p50": float(p50), "p99": float(p99)
+        }
+
+    return "曝光正常", {
+        "low_clip": float(low_clip), "high_clip": float(high_clip),
+        "p1": float(p1), "p50": float(p50), "p99": float(p99)
+    }
+
+
+def _merge_preprocess_params(params):
+    cfg = {
+        "judge": EXPOSURE_PREPROCESS_DEFAULTS["judge"].copy(),
+        "transform": {
+            key: value.copy()
+            for key, value in EXPOSURE_PREPROCESS_DEFAULTS["transform"].items()
+        },
+        "max_iters": EXPOSURE_PREPROCESS_DEFAULTS["max_iters"],
+    }
+
+    if not params:
+        return cfg
+
+    if "judge" in params and isinstance(params["judge"], dict):
+        cfg["judge"].update(params["judge"])
+
+    if "transform" in params and isinstance(params["transform"], dict):
+        for exposure_type, trans_cfg in params["transform"].items():
+            if not isinstance(trans_cfg, dict):
+                continue
+            if exposure_type not in cfg["transform"]:
+                cfg["transform"][exposure_type] = {}
+            cfg["transform"][exposure_type].update(trans_cfg)
+
+    if "max_iters" in params:
+        cfg["max_iters"] = int(params["max_iters"])
+
+    return cfg
+
+
+def preprocess(img, alpha=None, beta=None, gamma=None, params=None):
+    # 输入: img,alpha,beta,gamma
+    # 逻辑: 自动判断曝光类型，再按类型套用 transform；也支持手工 alpha/beta/gamma 覆盖
+    # 输出: new_img
+    if img is None:
+        raise ValueError("img 不能为空")
+
+    # 手动模式：你显式给了参数时，优先按手动参数执行一次变换
+    if alpha is not None or beta is not None or gamma is not None:
+        manual_alpha = 1.0 if alpha is None else alpha
+        manual_beta = 0.0 if beta is None else beta
+        manual_gamma = 1.0 if gamma is None else gamma
+        return transform_img(img, manual_alpha, manual_beta, manual_gamma)
+
+    cfg = _merge_preprocess_params(params)
+    out = img.copy()
+
+    for _ in range(max(1, cfg["max_iters"])):
+        exposure_type, _ = judge_exposure(out, **cfg["judge"])
+        if exposure_type == "曝光正常":
+            break
+
+        trans_cfg = cfg["transform"].get(
+            exposure_type,
+            cfg["transform"]["曝光正常"],
+        )
+        out = transform_img(
+            out,
+            alpha=trans_cfg.get("alpha", 1.0),
+            beta=trans_cfg.get("beta", 0.0),
+            gamma=trans_cfg.get("gamma", 1.0),
+        )
+
+    return out

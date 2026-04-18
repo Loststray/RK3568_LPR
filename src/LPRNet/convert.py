@@ -1,8 +1,10 @@
 import argparse
+import inspect
 import os
 import torch
 
 from model.LPRNet import build_lprnet
+from model.STNet import build_STNet
 
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -27,7 +29,8 @@ def parse_args():
     parser.add_argument("--batch_size", type=int, default=1, help="Dummy input batch size")
     parser.add_argument("--lpr_max_len", type=int, default=8, help="LPR max length")
     parser.add_argument("--class_num", type=int, default=68, help="Number of classes")
-    parser.add_argument("--dropout_rate", type=float, default=0.0, help="Dropout rate")
+    parser.add_argument("--dropout_rate", type=float, default=0, help="Dropout rate")
+    parser.add_argument("--model",default='LPRNet',help="model to convert")
     parser.add_argument(
         "--device",
         type=str,
@@ -35,7 +38,7 @@ def parse_args():
         choices=["cpu", "cuda"],
         help="Device used for export",
     )
-    parser.add_argument("--opset", type=int, default=11, help="ONNX opset version")
+    parser.add_argument("--opset", type=int, default=18, help="ONNX opset version")
     parser.add_argument(
         "--dynamic_batch",
         action="store_true",
@@ -50,13 +53,16 @@ def resolve_path(path):
     return os.path.abspath(path)
 
 
-def load_model(weights_path, lpr_max_len, class_num, dropout_rate, device):
-    model = build_lprnet(
+def load_model(mdl, weights_path, lpr_max_len, class_num, dropout_rate, device):
+    if mdl == "LPRNet":
+        model = build_lprnet(
         lpr_max_len=lpr_max_len,
         phase=False,
         class_num=class_num,
         dropout_rate=dropout_rate,
-    )
+        )
+    else:
+        model = build_STNet(False)
 
     if not os.path.isfile(weights_path):
         raise FileNotFoundError("Weights file not found: {}".format(weights_path))
@@ -72,25 +78,38 @@ def export_onnx(model, output_path, batch_size, img_h, img_w, opset, dynamic_bat
     os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
 
     dummy_input = torch.randn(batch_size, 3, img_h, img_w, device=device)
-
     dynamic_axes = None
     if dynamic_batch:
         dynamic_axes = {
             "images": {0: "batch_size"},
             "logits": {0: "batch_size"},
         }
+    export_kwargs = {
+        "export_params": True,
+        "opset_version": opset,
+        "do_constant_folding": True,
+        "input_names": ["images"],
+        "output_names": ["logits"],
+        "dynamic_axes": dynamic_axes,
+    }
+
+    # Force a single-file ONNX when the exporter supports this switch.
+    try:
+        export_sig = inspect.signature(torch.onnx.export).parameters
+    except (TypeError, ValueError):
+        export_sig = {}
+
+    if "external_data" in export_sig:
+        export_kwargs["external_data"] = False
+    elif "use_external_data_format" in export_sig:
+        export_kwargs["use_external_data_format"] = False
 
     with torch.no_grad():
         torch.onnx.export(
             model,
             dummy_input,
             output_path,
-            export_params=True,
-            opset_version=opset,
-            do_constant_folding=True,
-            input_names=["images"],
-            output_names=["logits"],
-            dynamic_axes=dynamic_axes,
+            **export_kwargs,
         )
 
 
@@ -105,6 +124,7 @@ def main():
     output_path = resolve_path(args.output)
 
     model = load_model(
+        mdl=args.model,
         weights_path=weights_path,
         lpr_max_len=args.lpr_max_len,
         class_num=args.class_num,

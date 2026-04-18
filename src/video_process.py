@@ -1,5 +1,6 @@
 import os
 import time
+from urllib.parse import urlparse
 
 import cv2
 import numpy as np
@@ -7,6 +8,7 @@ import numpy as np
 from image_process import cv2ImgAddText, detect_and_recognize, draw_detections, resolve_local_path
 
 DEFAULT_VIDEO_SOURCE = "0"
+NETWORK_STREAM_SCHEMES = {"rtsp", "rtmp", "http", "https", "udp", "tcp"}
 
 
 def is_key_frame(curr_gray, prev_gray, motion_threshold):
@@ -17,9 +19,17 @@ def is_key_frame(curr_gray, prev_gray, motion_threshold):
 
 
 def parse_video_source(source):
+    if source is None:
+        raise ValueError("视频源不能为空")
+
     source = str(source)
     if source.isdigit():
         return int(source)
+
+    scheme = urlparse(source).scheme.lower()
+    if scheme in NETWORK_STREAM_SCHEMES:
+        return source
+
     return resolve_local_path(source)
 
 
@@ -33,7 +43,10 @@ def process_video_stream(
     save_keyframes_dir=None,
 ):
     video_source = parse_video_source(source)
-    cap = cv2.VideoCapture(video_source)
+    if isinstance(video_source, str) and urlparse(video_source).scheme.lower() == "rtsp":
+        cap = cv2.VideoCapture(video_source, cv2.CAP_FFMPEG)
+    else:
+        cap = cv2.VideoCapture(video_source)
     if not cap.isOpened():
         raise RuntimeError(f"无法打开视频源: {source}")
 
