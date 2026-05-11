@@ -8,3 +8,5 @@ src/videos
 GEMINI.md
 **/*.png
 **/*.jpg
+src/web/runtime
+src/web/static/generated
