@@ -7,7 +7,8 @@ import numpy as np
 from rknn.api import RKNN
 
 BASE_DIR = Path(__file__).resolve().parent
-DATASET_PATH = BASE_DIR / "dataset_lpr.txt"
+QUANT_DATASET_PATH = BASE_DIR / "dataset_lpr.txt"
+TEST_DATASET_PATH = BASE_DIR / "dataset_lpr_full.txt"
 DEFAULT_QUANT = True
 
 INPUT_SIZE = (94, 24)  # (w, h)
@@ -158,7 +159,7 @@ def build_model(model_path, platform, do_quant, model_name):
     print("done")
 
     print(f"--> Building {model_name} model")
-    ret = rknn.build(do_quantization=do_quant, dataset=str(DATASET_PATH))
+    ret = rknn.build(do_quantization=do_quant, dataset=str(QUANT_DATASET_PATH))
     if ret != 0:
         print(f"Build {model_name} model failed!")
         exit(ret)
@@ -253,9 +254,9 @@ if __name__ == "__main__":
         stn_rknn = build_model(stn_model_path, platform, do_quant, "STN")
         lpr_rknn = build_model(lpr_model_path, platform, do_quant, "LPR")
 
-        image_paths = load_image_paths(DATASET_PATH)
+        image_paths = load_image_paths(TEST_DATASET_PATH)
         if not image_paths:
-            raise RuntimeError(f"No image paths found in {DATASET_PATH}")
+            raise RuntimeError(f"No image paths found in {TEST_DATASET_PATH}")
 
         stn_total_ms = 0.0
         lpr_total_ms = 0.0
@@ -263,7 +264,7 @@ if __name__ == "__main__":
         valid_count = 0
         match_count = 0
 
-        print(f"--> Testing with {len(image_paths)} images from {DATASET_PATH}")
+        print(f"--> Testing with {len(image_paths)} images from {TEST_DATASET_PATH}")
 
         for idx, image_path in enumerate(image_paths, start=1):
             if not image_path.is_file():

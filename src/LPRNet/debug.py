@@ -32,22 +32,9 @@ net.eval()
 ccpd = CCPDDataloader("/home/fiatiustitia/RK3568_LPR/src/dataset/CCPD_test", [94, 24], 8)
 
 
-for i in range(10):
-    img, label, _ = ccpd[i]
+for img,label,_ in ccpd:
     plate = ""
     for idx in label:
-        if idx > 30:
-            plate += CHARS[idx]
+        plate += CHARS[idx]
+    cv2.imwrite("/dataset/",img)
 
-    img_tensor = torch.from_numpy(img).unsqueeze(0).to(device)
-    with torch.no_grad():
-        warped = net(img_tensor).detach().cpu().numpy()[0]
-
-    img_ori = detransform(img)
-    img_warped = detransform(warped)
-    img_concat = np.hstack((img_ori, img_warped))
-    cv2.imshow(f"LP={plate} | left=raw right=stnet", img_concat)
-    key = cv2.waitKey(0)
-    cv2.destroyAllWindows()
-    if key == ord('q'):
-        break

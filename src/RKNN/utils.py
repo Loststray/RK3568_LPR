@@ -1,12 +1,12 @@
 from pathlib import Path
 
 
-DATASET_DIR = Path("/home/fiatiustitia/RK3568_LPR/src/dataset/CCPD_test")
-OUTPUT_FILE = Path("/home/fiatiustitia/RK3568_LPR/src/RKNN/dataset.txt")
+DATASET_DIR = Path("/home/fiatiustitia/RK3568_LPR/src/dataset/test")
+OUTPUT_FILE = Path("/home/fiatiustitia/RK3568_LPR/src/RKNN/dataset_lpr_full.txt")
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp", ".webp", ".tif", ".tiff"}
 
 
-def collect_image_paths(dataset_dir: Path,max_size = 100) -> list[Path]:
+def collect_image_paths(dataset_dir: Path,max_size = 100000) -> list[Path]:
     image_paths: list[Path] = []
 
     for path in dataset_dir.rglob("*"):

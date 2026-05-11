@@ -6,3 +6,5 @@ src/YOLO/runs
 **/__pycache__
 src/videos
 GEMINI.md
+**/*.png
+**/*.jpg
