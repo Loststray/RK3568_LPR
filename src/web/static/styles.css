@@ -172,6 +172,10 @@ body::before {
     background: linear-gradient(135deg, #cc5a26, #df8241);
 }
 
+.action-btn-camera {
+    background: linear-gradient(135deg, #3656a8, #4b7bc5);
+}
+
 .action-btn-detect {
     background: linear-gradient(135deg, #34271d, #5b4633);
 }
@@ -186,6 +190,49 @@ body::before {
 }
 
 .setting-row label {
+    font-weight: 700;
+}
+
+.camera-setting-row {
+    margin-top: 18px;
+}
+
+.camera-input-wrap {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+    min-width: min(100%, 380px);
+}
+
+.camera-input-wrap input {
+    flex: 1 1 260px;
+    min-width: 220px;
+    border: 1px solid rgba(71, 58, 32, 0.16);
+    border-radius: 999px;
+    padding: 13px 18px;
+    font: inherit;
+    color: var(--text);
+    background: rgba(255, 251, 243, 0.9);
+    outline: none;
+    transition: border-color var(--transition), box-shadow var(--transition);
+}
+
+.camera-input-wrap input:focus {
+    border-color: rgba(54, 86, 168, 0.42);
+    box-shadow: 0 0 0 4px rgba(75, 123, 197, 0.12);
+}
+
+.camera-port-tag {
+    display: inline-flex;
+    align-items: center;
+    min-height: 46px;
+    padding: 0 14px;
+    border-radius: 999px;
+    background: rgba(54, 86, 168, 0.1);
+    border: 1px solid rgba(54, 86, 168, 0.16);
+    color: #3656a8;
+    font-size: 0.92rem;
     font-weight: 700;
 }
 
@@ -250,6 +297,9 @@ body::before {
 
 .media-card {
     min-height: 420px;
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
 }
 
 .insight-card {
@@ -262,6 +312,7 @@ body::before {
     justify-content: space-between;
     gap: 14px;
     margin-bottom: 16px;
+    flex-shrink: 0;
 }
 
 .card-head h2 {
@@ -287,7 +338,8 @@ body::before {
 }
 
 .media-stage {
-    height: 100%;
+    flex: 1 1 auto;
+    width: 100%;
     min-height: 320px;
     border-radius: var(--radius-lg);
     border: 1px dashed rgba(91, 70, 51, 0.22);
@@ -346,6 +398,7 @@ body::before {
 .detail-item span {
     color: var(--muted);
     font-size: 0.92rem;
+    word-break: break-word;
 }
 
 .video-note {
@@ -401,6 +454,15 @@ body::before {
 
     .range-wrap {
         width: 100%;
+        min-width: 0;
+    }
+
+    .camera-input-wrap {
+        width: 100%;
+        min-width: 0;
+    }
+
+    .camera-input-wrap input {
         min-width: 0;
     }
 

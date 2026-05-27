@@ -94,7 +94,7 @@ def get_parser():
     parser.add_argument("--mode", choices=["image", "video", "dataset"], default="image", help="运行模式")
     parser.add_argument("--source", default=None, help="image 模式传图片根目录，video 模式传视频路径或摄像头编号")
     parser.add_argument("--conf-thres", type=float, default=0.5, help="YOLO 检测阈值")
-    parser.add_argument("--frame-interval", type=int, default=3, help="视频模式：每隔 N 帧触发一次关键帧判定")
+    parser.add_argument("--frame-interval", type=int, default=5, help="视频模式：每隔 N 帧触发一次关键帧判定")
     parser.add_argument("--motion-threshold", type=float, default=6.0, help="视频模式：帧间差分阈值")
     parser.add_argument("--max-skip", type=int, default=30, help="视频模式：最长跳过帧数，超过后强制做一次识别")
     parser.add_argument("--display-scale", type=float, default=1.0, help="视频模式：输出缩放比例")

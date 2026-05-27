@@ -13,14 +13,14 @@
                 <p class="eyebrow">RK3568 LPR</p>
                 <h1>车牌检测工作台</h1>
                 <p class="hero-text">
-                    上传单张图片或本地视频，网页会调用 `src/test.py` 的检测逻辑，
-                    在页面中返回带标注的结果媒体和识别到的车牌信息。
+                    上传单张图片、本地视频，或者接入局域网摄像头 HTTP 视频流，
+                    在页面中返回带标注的结果和识别到的车牌信息。
                 </p>
             </div>
             <div class="hero-metric">
                 <span class="metric-label">流程</span>
-                <strong>上传 → 预览 → 检测 → 回显</strong>
-                <span class="metric-note">支持图片和视频两种模式</span>
+                <strong>上传 / 接流 → 检测 → 回显</strong>
+                <span class="metric-note">支持图片、视频、摄像头三种模式</span>
             </div>
         </header>
 
@@ -29,7 +29,22 @@
                 <div class="button-row">
                     <button id="upload-image-btn" class="action-btn action-btn-image" type="button">上传图像</button>
                     <button id="upload-video-btn" class="action-btn action-btn-video" type="button">上传视频</button>
+                    <button id="connect-camera-btn" class="action-btn action-btn-camera" type="button">接入摄像头</button>
                     <button id="detect-btn" class="action-btn action-btn-detect" type="button" disabled>检测车牌</button>
+                </div>
+
+                <div class="setting-row camera-setting-row">
+                    <label for="camera-ip-input">摄像头 IP / URL</label>
+                    <div class="camera-input-wrap">
+                        <input
+                            id="camera-ip-input"
+                            type="text"
+                            value="{{ default_camera_ip }}"
+                            placeholder="例如：192.168.0.16 或 http://192.168.0.16:8889/stream"
+                            spellcheck="false"
+                        >
+                        <span class="camera-port-tag">默认 HTTP :8889</span>
+                    </div>
                 </div>
 
                 <div class="setting-row">
@@ -40,7 +55,7 @@
                     </div>
                 </div>
 
-                <p id="status-text" class="status-text status-idle">请选择一张图片或一个视频文件</p>
+                <p id="status-text" class="status-text status-idle">请选择图片、视频，或输入摄像头 IP 后点击“接入摄像头”</p>
 
                 <input id="image-input" type="file" accept="image/*" hidden>
                 <input id="video-input" type="file" accept="video/*" hidden>
@@ -53,7 +68,7 @@
                         <span id="source-badge" class="badge">未选择</span>
                     </div>
                     <div id="source-preview" class="media-stage empty-stage">
-                        <p>上传后会在这里预览原始图片或视频</p>
+                        <p>上传后会在这里预览原始图片或视频，接入摄像头后会显示实时源流</p>
                     </div>
                 </article>
 
@@ -82,10 +97,10 @@
                 <article class="card insight-card">
                     <div class="card-head">
                         <h2>检测明细</h2>
-                        <span class="badge badge-soft">图片模式</span>
+                        <span class="badge badge-soft">多模式</span>
                     </div>
                     <div id="detail-list" class="detail-list empty-list">
-                        <p>图片模式会列出检测框坐标和置信度，视频模式显示帧处理信息</p>
+                        <p>图片模式会列出检测框坐标和置信度，视频与摄像头模式显示帧处理与实时识别信息</p>
                     </div>
                 </article>
             </section>

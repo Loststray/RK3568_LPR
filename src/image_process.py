@@ -166,7 +166,7 @@ def draw_detections(frame, detections):
         cv2.rectangle(output, (x1, y1), (x2, y2), (0, 255, 0), 2)
         label = f"{plate_no} ({conf:.2f})"
         text_y = max(0, y1 - 30)
-        output = cv2ImgAddText(output, label, (x1, text_y), textColor=(0, 255, 0), textSize=24)
+        output = cv2ImgAddText(output, label, (x1, text_y), textColor=(0, 255, 0), textSize=40)
     return output
 
 
